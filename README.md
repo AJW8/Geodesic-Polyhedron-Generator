@@ -1,2 +1,4 @@
 # Geodesic-Polyhedron-Generator
-A script for a static class that can be used to produce geodesic polyhedron shapes in the Unity game engine.
+This repository contains the following:
+- A fully documented script for producing geodesic polyhedrons in Unity e.g. for meshes.
+- A collection of assets representing either basic isohedrons or geodesic polyhedrons created using this script.
