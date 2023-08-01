@@ -213,4 +213,452 @@ public static class GeodesicPolyhedronGenerator
             triangles = newTriangles.ToArray()
         };
     }
+
+    /// <summary>
+    /// Produce the dual of a tetrahedron whose faces have been subdivided according to the specified level of complexity.
+    /// </summary>
+    /// <param name="class1">True if making a polyhedron of Class 1 (m, 0), false if making one of Class 2 (m, m).</param>
+    /// <param name="complexity">The number of new vertices added to each edge of the original shape.</param>
+    /// <returns>The dual of a geodesic tetrahedron of Class 1 or 2 built according to the specified level of complexity.</returns>
+    public static Mesh GenerateDualGeodesicTetrahedron(bool class1, int complexity)
+    {
+        Mesh mesh = GenerateGeodesicPolyhedronFromTetrahedron(complexity);
+        Vector3[] vertices = mesh.vertices;
+        int[] triangles = mesh.triangles;
+        List<Vector3> newVertices = new List<Vector3>();
+        List<int> newTriangles = new List<int>();
+        List<int> hexagons = new List<int>();
+        if (class1) // class 1 polyhedron (m, 0)
+        {
+            for (int i = 0; i < triangles.Length; i += 3) newVertices.Add((vertices[triangles[i]] + vertices[triangles[i + 1]] + vertices[triangles[i + 2]]).normalized); // add new vertex in the centre of each face of the dual shape
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    if (adjacentFaces.Count == 3) newTriangles.Add(adjacentFaces[currentIndex]);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(adjacentFaces[currentIndex]);
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j]) // add point to current face
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+        }
+        else // class 2 polyhedron (m, m)
+        {
+            List<int> edges = new List<int>();
+            List<int> newEdges = new List<int>();
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    edges.Add(i);
+                    edges.Add(nextPoints[currentIndex]);
+                    newEdges.Add(newVertices.Count);
+                    if (adjacentFaces.Count == 3) newTriangles.Add(newVertices.Count);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(newVertices.Count);
+                    newVertices.Add((vertices[i] + (vertices[nextPoints[currentIndex]] - vertices[i]) / 3).normalized); // add new vertex a third of the way along the edge between the two vertices and project it onto the unit sphere
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j])
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+            for (int i = 0; i < triangles.Length; i++) // for each triangle of the dual shape
+            {
+                List<int> adjacentVertices = new List<int>();
+                List<int> newAdjacentVertices = new List<int>();
+                for (int j = 0; j < edges.Count; j += 2)
+                {
+                    if (triangles[i] == edges[j])
+                    {
+                        adjacentVertices.Add(edges[j + 1]);
+                        newAdjacentVertices.Add(newEdges[j / 2]);
+                    }
+                }
+                for (int j = 0; j < adjacentVertices.Count; j++)
+                {
+                    if (triangles[i % 3 < 2 ? i + 1 : i - 2] == adjacentVertices[j] && triangles[i % 3 == 0 ? i + 2 : i - 1] == adjacentVertices[(j + 1) % adjacentVertices.Count]) // add these two vertices to current hexagon
+                    {
+                        hexagons.Add(newAdjacentVertices[(j + 1) % newAdjacentVertices.Count]);
+                        hexagons.Add(newAdjacentVertices[j]);
+                    }
+                }
+            }
+        }
+        Vector3 newVertex = new Vector3(0, 0, 0);
+        for (int i = 0; i < hexagons.Count; i++) // place new vertex in the centre of each hexagonal face and connect it to the edges with triangles
+        {
+            newVertex += newVertices[hexagons[i]] / 6;
+            newTriangles.Add(hexagons[i]);
+            if (i % 6 < 5)
+            {
+                newTriangles.Add(hexagons[i + 1]);
+                newTriangles.Add(newVertices.Count);
+            }
+            else
+            {
+                newTriangles.Add(hexagons[i - 5]);
+                newTriangles.Add(newVertices.Count);
+                newVertices.Add(newVertex);
+                newVertex = new Vector3(0, 0, 0);
+            }
+        }
+        int[] newTriangleArray = newTriangles.ToArray();
+        for (int i = 0; i < newTriangleArray.Length; i += 3)
+        {
+            int t = newTriangleArray[i + 1];
+            newTriangleArray[i + 1] = newTriangleArray[i + 2];
+            newTriangleArray[i + 2] = t;
+        }
+        return new Mesh()
+        {
+            vertices = newVertices.ToArray(),
+            triangles = newTriangleArray
+        };
+    }
+
+    /// <summary>
+    /// Produce the dual of an octahedron whose faces have been subdivided according to the specified level of complexity.
+    /// </summary>
+    /// <param name="class1">True if making a polyhedron of Class 1 (m, 0), false if making one of Class 2 (m, m).</param>
+    /// <param name="complexity">The number of new vertices added to each edge of the original shape.</param>
+    /// <returns>The dual of a geodesic octahedron of Class 1 or 2 built according to the specified level of complexity.</returns>
+    public static Mesh GenerateDualGeodesicOctahedron(bool class1, int complexity)
+    {
+        Mesh mesh = GenerateGeodesicPolyhedronFromOctahedron(complexity);
+        Vector3[] vertices = mesh.vertices;
+        int[] triangles = mesh.triangles;
+        List<Vector3> newVertices = new List<Vector3>();
+        List<int> newTriangles = new List<int>();
+        List<int> squares = new List<int>();
+        List<int> hexagons = new List<int>();
+        if (class1) // class 1 polyhedron (m, 0)
+        {
+            for (int i = 0; i < triangles.Length; i += 3) newVertices.Add((vertices[triangles[i]] + vertices[triangles[i + 1]] + vertices[triangles[i + 2]]).normalized); // add new vertex in the centre of each face of the dual shape
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    if (adjacentFaces.Count == 4) squares.Add(adjacentFaces[currentIndex]);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(adjacentFaces[currentIndex]);
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j]) // add point to current face
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+        }
+        else // class 2 polyhedron (m, m)
+        {
+            List<int> edges = new List<int>();
+            List<int> newEdges = new List<int>();
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    edges.Add(i);
+                    edges.Add(nextPoints[currentIndex]);
+                    newEdges.Add(newVertices.Count);
+                    if (adjacentFaces.Count == 4) squares.Add(newVertices.Count);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(newVertices.Count);
+                    newVertices.Add((vertices[i] + (vertices[nextPoints[currentIndex]] - vertices[i]) / 3).normalized); // add new vertex a third of the way along the edge between the two vertices and project it onto the unit sphere
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j])
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+            for (int i = 0; i < triangles.Length; i++) // for each triangle of the dual shape
+            {
+                List<int> adjacentVertices = new List<int>();
+                List<int> newAdjacentVertices = new List<int>();
+                for (int j = 0; j < edges.Count; j += 2)
+                {
+                    if (triangles[i] == edges[j])
+                    {
+                        adjacentVertices.Add(edges[j + 1]);
+                        newAdjacentVertices.Add(newEdges[j / 2]);
+                    }
+                }
+                for (int j = 0; j < adjacentVertices.Count; j++)
+                {
+                    if (triangles[i % 3 < 2 ? i + 1 : i - 2] == adjacentVertices[j] && triangles[i % 3 == 0 ? i + 2 : i - 1] == adjacentVertices[(j + 1) % adjacentVertices.Count]) // add these two vertices to current hexagon
+                    {
+                        hexagons.Add(newAdjacentVertices[(j + 1) % newAdjacentVertices.Count]);
+                        hexagons.Add(newAdjacentVertices[j]);
+                    }
+                }
+            }
+        }
+        Vector3 newVertex = new Vector3(0, 0, 0);
+        for (int i = 0; i < squares.Count; i++) // place new vertex in the centre of each square face and connect it to the edges with triangles
+        {
+            newVertex += newVertices[squares[i]] / 4;
+            newTriangles.Add(squares[i]);
+            if (i % 4 < 3)
+            {
+                newTriangles.Add(squares[i + 1]);
+                newTriangles.Add(newVertices.Count);
+            }
+            else
+            {
+                newTriangles.Add(squares[i - 3]);
+                newTriangles.Add(newVertices.Count);
+                newVertices.Add(newVertex);
+                newVertex = new Vector3(0, 0, 0);
+            }
+        }
+        for (int i = 0; i < hexagons.Count; i++) // place new vertex in the centre of each hexagonal face and connect it to the edges with triangles
+        {
+            newVertex += newVertices[hexagons[i]] / 6;
+            newTriangles.Add(hexagons[i]);
+            if (i % 6 < 5)
+            {
+                newTriangles.Add(hexagons[i + 1]);
+                newTriangles.Add(newVertices.Count);
+            }
+            else
+            {
+                newTriangles.Add(hexagons[i - 5]);
+                newTriangles.Add(newVertices.Count);
+                newVertices.Add(newVertex);
+                newVertex = new Vector3(0, 0, 0);
+            }
+        }
+        return new Mesh()
+        {
+            vertices = newVertices.ToArray(),
+            triangles = newTriangles.ToArray()
+        };
+    }
+
+    /// <summary>
+    /// Produce the dual of an icosahedron whose faces have been subdivided according to the specified level of complexity.
+    /// </summary>
+    /// <param name="class1">True if making a polyhedron of Class 1 (m, 0), false if making one of Class 2 (m, m).</param>
+    /// <param name="complexity">The number of new vertices added to each edge of the original shape.</param>
+    /// <returns>The dual of a geodesic icosahedron of Class 1 or 2 built according to the specified level of complexity.</returns>
+    public static Mesh GenerateDualGeodesicIcosahedron(bool class1, int complexity)
+    {
+        Mesh mesh = GenerateGeodesicPolyhedronFromIcosahedron(complexity);
+        Vector3[] vertices = mesh.vertices;
+        int[] triangles = mesh.triangles;
+        List<Vector3> newVertices = new List<Vector3>();
+        List<int> newTriangles = new List<int>();
+        List<int> pentagons = new List<int>();
+        List<int> hexagons = new List<int>();
+        if (class1) // class 1 polyhedron (m, 0)
+        {
+            for (int i = 0; i < triangles.Length; i += 3) newVertices.Add((vertices[triangles[i]] + vertices[triangles[i + 1]] + vertices[triangles[i + 2]]).normalized); // add new vertex in the centre of each face of the dual shape
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    if (adjacentFaces.Count == 5) pentagons.Add(adjacentFaces[currentIndex]);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(adjacentFaces[currentIndex]);
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j]) // add point to current face
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+        }
+        else // class 2 polyhedron (m, m)
+        {
+            List<int> edges = new List<int>();
+            List<int> newEdges = new List<int>();
+            for (int i = 0; i < vertices.Length; i++) // for each vertex of the dual shape
+            {
+                List<int> adjacentFaces = new List<int>();
+                List<int> previousPoints = new List<int>();
+                List<int> nextPoints = new List<int>();
+                for (int j = 0; j < triangles.Length; j++) // for each triangle of the dual shape
+                {
+                    if (i == triangles[j]) // if the current triangle contains the current point
+                    {
+                        adjacentFaces.Add(j / 3);
+                        previousPoints.Add(triangles[j % 3 == 0 ? j + 2 : j - 1]);
+                        nextPoints.Add(triangles[j % 3 < 2 ? j + 1 : j - 2]);
+                    }
+                }
+                int currentIndex = 0;
+                do // find next vertex in cycle
+                {
+                    edges.Add(i);
+                    edges.Add(nextPoints[currentIndex]);
+                    newEdges.Add(newVertices.Count);
+                    if (adjacentFaces.Count == 5) pentagons.Add(newVertices.Count);
+                    else if (adjacentFaces.Count == 6) hexagons.Add(newVertices.Count);
+                    newVertices.Add((vertices[i] + (vertices[nextPoints[currentIndex]] - vertices[i]) / 3).normalized); // add new vertex a third of the way along the edge between the two vertices and project it onto the unit sphere
+                    bool foundNext = false;
+                    for (int j = 0; j < adjacentFaces.Count; j++)
+                    {
+                        if (!foundNext && j != currentIndex && previousPoints[currentIndex] == nextPoints[j])
+                        {
+                            currentIndex = j;
+                            foundNext = true;
+                        }
+                    }
+                }
+                while (currentIndex != 0);
+            }
+            for (int i = 0; i < triangles.Length; i++) // for each triangle of the dual shape
+            {
+                List<int> adjacentVertices = new List<int>();
+                List<int> newAdjacentVertices = new List<int>();
+                for (int j = 0; j < edges.Count; j += 2)
+                {
+                    if (triangles[i] == edges[j])
+                    {
+                        adjacentVertices.Add(edges[j + 1]);
+                        newAdjacentVertices.Add(newEdges[j / 2]);
+                    }
+                }
+                for (int j = 0; j < adjacentVertices.Count; j++)
+                {
+                    if (triangles[i % 3 < 2 ? i + 1 : i - 2] == adjacentVertices[j] && triangles[i % 3 == 0 ? i + 2 : i - 1] == adjacentVertices[(j + 1) % adjacentVertices.Count]) // add these two vertices to current hexagon
+                    {
+                        hexagons.Add(newAdjacentVertices[(j + 1) % newAdjacentVertices.Count]);
+                        hexagons.Add(newAdjacentVertices[j]);
+                    }
+                }
+            }
+        }
+        Vector3 newVertex = new Vector3(0, 0, 0);
+        for (int i = 0; i < pentagons.Count; i++) // place new vertex in the centre of each pentagonal face and connect it to the edges with triangles
+        {
+            newVertex += newVertices[pentagons[i]] / 5;
+            newTriangles.Add(pentagons[i]);
+            if (i % 5 < 4)
+            {
+                newTriangles.Add(pentagons[i + 1]);
+                newTriangles.Add(newVertices.Count);
+            }
+            else
+            {
+                newTriangles.Add(pentagons[i - 4]);
+                newTriangles.Add(newVertices.Count);
+                newVertices.Add(newVertex);
+                newVertex = new Vector3(0, 0, 0);
+            }
+        }
+        for (int i = 0; i < hexagons.Count; i++) // place new vertex in the centre of each hexagonal face and connect it to the edges with triangles
+        {
+            newVertex += newVertices[hexagons[i]] / 6;
+            newTriangles.Add(hexagons[i]);
+            if (i % 6 < 5)
+            {
+                newTriangles.Add(hexagons[i + 1]);
+                newTriangles.Add(newVertices.Count);
+            }
+            else
+            {
+                newTriangles.Add(hexagons[i - 5]);
+                newTriangles.Add(newVertices.Count);
+                newVertices.Add(newVertex);
+                newVertex = new Vector3(0, 0, 0);
+            }
+        }
+        return new Mesh()
+        {
+            vertices = newVertices.ToArray(),
+            triangles = newTriangles.ToArray()
+        };
+    }
 }
